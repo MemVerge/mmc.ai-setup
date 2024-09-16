@@ -15,7 +15,38 @@ if ! $ignore_errors; then
     set -e
 fi
 
-source logging.sh
+imports='
+    common.sh
+    logging.sh
+    venv.sh
+'
+for import in $imports; do
+    if ! curl -LfsSo $import https://raw.githubusercontent.com/MemVerge/mmc.ai-setup/unified-setup/util/$import; then
+        echo "Error getting script dependency: $import"
+        exit 1
+    fi
+    source $import
+done
+
+ensure_prerequisites
+
+MMAI_TEARDOWN_LOG_DIR="mmai-teardown-$(file_timestamp)"
+mkdir -p $MMAI_TEARDOWN_LOG_DIR
+LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/mmai-teardown.log"
+set_log_file $LOG_FILE
+
+TEMP_DIR=$(mktemp -d)
+cleanup() {
+    dvenv || true
+    rm -rf $TEMP_DIR
+}
+trap cleanup EXIT
+
+cvenv $ANSIBLE_VENV || true
+avenv $ANSIBLE_VENV
+pip install -q ansible
+
+################################################################################
 
 remove_mmcai_cluster=false
 remove_mmcai_manager=false
@@ -31,9 +62,6 @@ force_if_remove_cluster_resources=false
 
 confirm_selection=false
 
-RELEASE_NAMESPACE=mmcai-system
-
-
 # Sanity check.
 log "Getting version to check connectivity."
 if ! kubectl version; then
@@ -42,7 +70,6 @@ if ! kubectl version; then
 else
     log_good "Proceeding with teardown."
 fi
-
 
 # Determine if mmcai-cluster and mmcai-manager are installed.
 if helm list -n mmcai-system -a -q | grep mmcai-cluster; then
@@ -59,15 +86,16 @@ else
     log "MMC.AI Manager not detected."
 fi
 
+################################################################################
 
 # Remove mmcai-cluster?
 if $mmcai_cluster_detected; then
     div
-    read -p "Remove MMC.AI Cluster [y/N]:" remove_mmcai_cluster
-    case $remove_mmcai_cluster in
-        [Yy]* ) remove_mmcai_cluster=true;;
-        * ) remove_mmcai_cluster=false;;
-    esac
+    if prompt_default_yn "Remove MMC.AI Cluster [y/N]:" n; then
+        remove_mmcai_cluster=true
+    else
+        remove_mmcai_cluster=false
+    fi
 fi
 
 if $remove_mmcai_cluster || ! $mmcai_cluster_detected; then
@@ -85,11 +113,11 @@ if $mmcai_manager_detected; then
         remove_mmcai_manager=true
     else
         div
-        read -p "Remove MMC.AI Manager [y/N]:" remove_mmcai_manager
-        case $remove_mmcai_manager in
-            [Yy]* ) remove_mmcai_manager=true;;
-            * ) remove_mmcai_manager=false;;
-        esac
+        if prompt_default_yn "Remove MMC.AI Manager [y/N]:" n; then
+            remove_mmcai_manager=true
+        else
+            remove_mmcai_manager=false
+        fi
     fi
 fi
 
@@ -109,39 +137,47 @@ if $no_mmcai_cluster; then
     fi
 
     echo_red "Caution: This will cause data loss!"
-    read -p "Remove cluster resources (e.g. node groups, departments, projects, workloads) [y/N]:" remove_cluster_resources
-    case $remove_cluster_resources in
-        [Yy]* ) remove_cluster_resources=true;;
-        * ) remove_cluster_resources=false;;
-    esac
+    if prompt_default_yn "Remove cluster resources (e.g. node groups, departments, projects, workloads) [y/N]:" n; then
+        remove_cluster_resources=true
+    else
+        remove_cluster_resources=false
+    fi
 
     if $remove_cluster_resources && $mmcai_cluster_detected; then
-        read -p "Force? This may result in an unclean state [y/N]:" force_if_remove_cluster_resources
-        case $force_if_remove_cluster_resources in
-            [Yy]* ) force_if_remove_cluster_resources=true;;
-            * ) force_if_remove_cluster_resources=false;;
-        esac
+        if prompt_default_yn "Force? This may result in an unclean state [y/N]:" n; then
+            force_if_remove_cluster_resources=true
+        else
+            force_if_remove_cluster_resources=false
+        fi
     fi
 
 
     # Remove billing database?
     div
     echo_red "Caution: This will cause data loss!"
-    read -p "Remove billing database [y/N]:" remove_billing_database
-    case $remove_billing_database in
-        [Yy]* ) remove_billing_database=true;;
-        * ) remove_billing_database=false;;
-    esac
-
+    if prompt_default_yn "Remove billing database [y/N]:" n; then
+        remove_billing_database=true
+    else
+        remove_billing_database=false
+    fi
+    if $remove_billing_database; then
+        echo "Provide an Ansible inventory of nodes (Ansible host group [$ANSIBLE_INVENTORY_DATABASE_NODE_GROUP]) to remove billing databases from."
+        ANSIBLE_INVENTORY=''
+        until [[ -e "$ANSIBLE_INVENTORY" ]]; do
+            read -p "Ansible inventory: " ANSIBLE_INVENTORY
+            if ! [[ -e "$ANSIBLE_INVENTORY" ]]; then
+                log_bad "Path does not exist."
+            fi
+        done
+    fi
 
     # Remove MemVerge image pull secrets?
     div
-    read -p "Remove MemVerge image pull secrets [y/N]:" remove_memverge_secrets
-    case $remove_memverge_secrets in
-        [Yy]* ) remove_memverge_secrets=true;;
-        * ) remove_memverge_secrets=false;;
-    esac
-
+    if prompt_default_yn "Remove MemVerge image pull secrets [y/N]:" n; then
+        remove_memverge_secrets=true
+    else
+        remove_memverge_secrets=false
+    fi
 
     # Remove namespaces?
     if $remove_cluster_resources \
@@ -150,42 +186,42 @@ if $no_mmcai_cluster; then
     then
         div
         echo_red "Caution: This is dangerous!"
-        read -p "Remove MMC.AI namespaces [y/N]:" remove_namespaces
-        case $remove_namespaces in
-            [Yy]* ) remove_namespaces=true;;
-            * ) remove_namespaces=false;;
-        esac
+        if prompt_default_yn "Remove MMC.AI namespaces [y/N]:" n; then
+            remove_namespaces=true
+        else
+            remove_namespaces=false
+        fi
     fi
 
 
     # Remove Prometheus CRDs and namespace?
     div
     echo_red "Caution: This is dangerous!"
-    read -p "Remove Prometheus CRDs and namespace (MMC.AI included dependency) [y/N]:" remove_prometheus_crds_namespace
-    case $remove_prometheus_crds_namespace in
-        [Yy]* ) remove_prometheus_crds_namespace=true;;
-        * ) remove_prometheus_crds_namespace=false;;
-    esac
+    if prompt_default_yn "Remove Prometheus CRDs and namespace (MMC.AI included dependency) [y/N]:" n; then
+        remove_prometheus_crds_namespace=true
+    else
+        remove_prometheus_crds_namespace=false
+    fi
 
 
     # Remove NVIDIA GPU Operator?
     div
     echo_red "Caution: This is dangerous!"
-    read -p "Remove NVIDIA GPU Operator (MMC.AI standalone dependency) [y/N]:" remove_nvidia_gpu_operator
-    case $remove_nvidia_gpu_operator in
-        [Yy]* ) remove_nvidia_gpu_operator=true;;
-        * ) remove_nvidia_gpu_operator=false;;
-    esac
+    if prompt_default_yn "Remove NVIDIA GPU Operator (MMC.AI standalone dependency) [y/N]:" n; then
+        remove_nvidia_gpu_operator=true
+    else
+        remove_nvidia_gpu_operator=false
+    fi
 
 
     # Remove Kubeflow?
     div
     echo_red "Caution: This is dangerous!"
-    read -p "Remove Kubeflow (MMC.AI standalone dependency) [y/N]:" remove_kubeflow
-    case $remove_kubeflow in
-        [Yy]* ) remove_kubeflow=true;;
-        * ) remove_kubeflow=false;;
-    esac
+    if prompt_default_yn "Remove Kubeflow (MMC.AI standalone dependency) [y/N]:" n; then
+        remove_kubeflow=true
+    else
+        remove_kubeflow=false
+    fi
 fi
 
 ################################################################################
@@ -208,11 +244,11 @@ echo "NVIDIA GPU Operator:" $remove_nvidia_gpu_operator
 echo "Kubeflow:" $remove_kubeflow
 
 div
-read -p "Confirm selection [y/N]:" confirm_selection
-case $confirm_selection in
-    [Yy]* ) confirm_selection=true;;
-    * ) confirm_selection=false;;
-esac
+if prompt_default_yn "Confirm selection [y/N]:" n; then
+    confirm_selection=true
+else
+    confirm_selection=false
+fi
 
 if ! $confirm_selection; then
     div
@@ -226,12 +262,16 @@ log_good "Beginning teardown..."
 ################################################################################
 
 if $remove_mmcai_manager; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-mmcai-manager.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing MMC.AI Manager..."
-    helm uninstall --debug -n $RELEASE_NAMESPACE mmcai-manager --ignore-not-found
+    helm uninstall -n $RELEASE_NAMESPACE mmcai-manager --ignore-not-found --debug
 fi
 
 if $remove_cluster_resources; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-cluster-resources.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing cluster resources..."
 
@@ -319,35 +359,45 @@ if $remove_cluster_resources; then
 fi
 
 if $remove_mmcai_cluster; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-mmcai-cluster.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing MMC.AI Cluster..."
     echo "If you selected to remove cluster resources, disregard below messages that resources are kept due to the resource policy:"
     ## If no service account, run helm uninstall without the engine cleanup hook.
     if ! kubectl get serviceaccount mmcloud-operator-controller-manager -n mmcloud-operator-system &> /dev/null; then
+        log "Service account mmcloud-operator-controller-manager not found. Skipping mmcloud-engine cleanup Helm hook."
         helm uninstall --debug --no-hooks -n $RELEASE_NAMESPACE mmcai-cluster --ignore-not-found
     else
         helm uninstall --debug -n $RELEASE_NAMESPACE mmcai-cluster --ignore-not-found
+        log "Performed uninstallation with mmcloud-engine cleanup Helm hook. On success, engines.mmcloud.io CRD should be removed irrespective of resource policy."
     fi
 fi
 
 if $remove_billing_database; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-billing-database.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing billing database..."
-    wget -O mysql-teardown.sh https://raw.githubusercontent.com/MemVerge/mmc.ai-setup/main/mysql-teardown.sh
-    chmod +x mysql-teardown.sh
-    ./mysql-teardown.sh
-    rm mysql-teardown.sh
+
+    curl -LfsS https://raw.githubusercontent.com/MemVerge/mmc.ai-setup/unified-setup/playbooks/mysql-teardown-playbook.yaml | \
+    ansible-playbook -i $ANSIBLE_INVENTORY /dev/stdin
+
     kubectl delete secret -n $RELEASE_NAMESPACE mmai-mysql-secret --ignore-not-found
 fi
 
 if $remove_memverge_secrets; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-memverge-secrets.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing MemVerge image pull secrets..."
     kubectl delete secret -n $RELEASE_NAMESPACE memverge-dockerconfig --ignore-not-found
-    kubectl delete secret -n mmcloud-operator-system memverge-dockerconfig --ignore-not-found
+    kubectl delete secret -n $MMCLOUD_OPERATOR_NAMESPACE memverge-dockerconfig --ignore-not-found
 fi
 
 if $remove_namespaces; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-namespaces.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing MMC.AI namespaces..."
     kubectl delete namespace $RELEASE_NAMESPACE --ignore-not-found
@@ -355,6 +405,8 @@ if $remove_namespaces; then
 fi
 
 if $remove_nvidia_gpu_operator; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-nvidia-gpu-operator.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing NVIDIA GPU Operator..."
 
@@ -382,6 +434,8 @@ if $remove_nvidia_gpu_operator; then
 fi
 
 if $remove_prometheus_crds_namespace; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-prometheus-crds-namespace.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing Prometheus CRDs and namespace..."
     prometheus_crds='
@@ -399,16 +453,35 @@ if $remove_prometheus_crds_namespace; then
     for crd in $prometheus_crds; do
         kubectl delete crd $crd --ignore-not-found
     done
-    kubectl delete namespace monitoring --ignore-not-found
+    kubectl delete namespace $PROMETHEUS_NAMESPACE --ignore-not-found
 fi
 
+delete_kubeflow() {
+    if kubectl get profiles.kubeflow.org &> /dev/null && ! kubectl delete profiles.kubeflow.org --all && kubectl get profiles.kubeflow.org; then
+        return 1
+    fi
+    kubectl delete --ignore-not-found -f $TEMP_DIR/$KUBEFLOW_MANIFEST
+}
+
 if $remove_kubeflow; then
+    LOG_FILE="$MMAI_TEARDOWN_LOG_DIR/remove-kubeflow.log"
+    set_log_file $LOG_FILE
     div
     log_good "Removing Kubeflow..."
-    wget -O kubeflow-teardown.sh https://raw.githubusercontent.com/MemVerge/mmc.ai-setup/main/kubeflow-teardown.sh
-    chmod +x kubeflow-teardown.sh
-    ./kubeflow-teardown.sh
-    rm kubeflow-teardown.sh
+
+    build_kubeflow $TEMP_DIR
+
+    attempts=5
+    log "Deleting all Kubeflow resources..."
+    log "Attempts remaining: $((attempts))"
+    while (( attempts > 0 )) && ! delete_kubeflow; do
+        attempts=$((attempts - 1))
+        log "Kubeflow removal incomplete."
+        log "Attempts remaining: $((attempts))"
+        log "Waiting 15 seconds before attempt..."
+        sleep 15
+    done
+    log "Kubeflow removed."
 fi
 
 div

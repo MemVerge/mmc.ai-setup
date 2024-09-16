@@ -1,0 +1,48 @@
+- name: Configure sysctl settings across all hosts
+  hosts: all
+  become: yes
+  tasks:
+    - name: Ensure sysctl configuration file exists
+      ansible.builtin.file:
+        path: /etc/sysctl.conf
+        state: touch
+
+    - name: Set fs.inotify.max_queued_events
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^fs.inotify.max_queued_events'
+        line: 'fs.inotify.max_queued_events = 32384'
+        create: yes
+
+    - name: Set fs.inotify.max_user_instances
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^fs.inotify.max_user_instances'
+        line: 'fs.inotify.max_user_instances = 4096'
+        create: yes
+
+    - name: Set fs.inotify.max_user_watches
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^fs.inotify.max_user_watches'
+        line: 'fs.inotify.max_user_watches = 2008100'
+        create: yes
+
+    - name: Set net.core.somaxconn
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^net.core.somaxconn'
+        line: 'net.core.somaxconn = 8192'
+        create: yes
+
+    - name: Apply sysctl changes
+      ansible.builtin.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { key: 'fs.inotify.max_queued_events', value: '32384' }
+        - { key: 'fs.inotify.max_user_instances', value: '4096' }
+        - { key: 'fs.inotify.max_user_watches', value: '2008100' }
+        - { key: 'net.core.somaxconn', value: '8192' }

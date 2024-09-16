@@ -1,0 +1,9 @@
+- name: Create directory on database nodes
+  hosts: mmai_database
+  become: yes
+  tasks:
+    - name: Ensure directory exists
+      ansible.builtin.file:
+        path: /mnt/disks/mmai-mysql-billing
+        state: directory
+        mode: '755'
