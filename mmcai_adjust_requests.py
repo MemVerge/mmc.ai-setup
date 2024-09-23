@@ -39,12 +39,12 @@ def get_pods_with_high_cpu_requests(threshold=0.1):
                     'name': pod.metadata.name,
                     'labels': pod.metadata.labels,
                     'cpu_request': cpu_request_m,
-                    'container': container.name
+                    'container': container.name,  # Add a comma here
                     'owner': pod.metadata.owner_references[0]
                 })
 
     # Sort pods by CPU requests, highest first
-    pod_list.sort(key=lambda x: x['cpu_limit'], reverse=True)
+    pod_list.sort(key=lambda x: x['cpu_request'], reverse=True)
     return pod_list
 
 def convert_cpu_to_millicores(cpu):
@@ -173,7 +173,7 @@ def main():
     # Restart the modified pods to apply the changes
     for pod in modified_pods:
         if 'deployment' in pod:
-            restart_deployment(pod['deployment'])
+            restart_deployment(apps_v1, pod['deployment'], pod['namespace'])
         else:
             restart_pod(pod['name'], pod['namespace'])
 

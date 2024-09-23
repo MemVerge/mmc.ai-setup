@@ -1,6 +1,6 @@
 #!/bin/bash
 
-source logging.sh
+source ./logging.sh
 
 mgmt_node=$(kubectl get nodes --no-headers -l node-role.kubernetes.io/control-plane=  | awk '{print $1}')
 work_node=$(kubectl get nodes --no-headers -l node-role.kubernetes.io/control-plane!= | awk '{print $1}')
@@ -13,7 +13,7 @@ for worker in $WORK_NODE; do
     kubectl drain $worker
 done
 
-wget -O mmcai_adjust_requests.py https://raw.githubusercontent.com/MemVerge/mmc.ai-setup/refs/heads/main/mmcai-drain.sh
+wget -O mmcai_adjust_requests.py https://raw.githubusercontent.com/MemVerge/mmc.ai-setup/refs/heads/main/mmcai_adjust_requests.py 
 
 # Dependencies for the requests.py script
 pip install kubernetes
